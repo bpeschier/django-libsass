@@ -1,11 +1,18 @@
+import os.path
+import os
+import re
+
 from django.conf import settings
 from django.contrib.staticfiles.finders import get_finders
+from django.core.files.base import ContentFile
 
 import sass
 from compressor.filters.base import FilterBase
+from compressor.css import CssCompressor
 
 OUTPUT_STYLE = getattr(settings, 'LIBSASS_OUTPUT_STYLE', 'nested')
 SOURCE_COMMENTS = getattr(settings, 'LIBSASS_SOURCE_COMMENTS', settings.DEBUG)
+SOURCE_MAP_FILENAME = getattr(settings, 'LIBSASS_SOURCE_MAP_FILENAME', '{filename}.map')
 
 
 def get_include_paths():
@@ -35,6 +42,7 @@ def get_include_paths():
 
 INCLUDE_PATHS = None  # populate this on first call to 'compile'
 
+
 def compile(**kwargs):
     """Perform sass.compile, but with the appropriate include_paths for Django added"""
     global INCLUDE_PATHS
@@ -53,10 +61,35 @@ class SassCompiler(FilterBase):
 
     def input(self, **kwargs):
         if self.filename:
-            return compile(filename=self.filename,
-                           output_style=OUTPUT_STYLE,
-                           source_comments=SOURCE_COMMENTS)
-        else:
-            return compile(string=self.content,
-                           output_style=OUTPUT_STYLE)
+            map_filename = SOURCE_MAP_FILENAME.format(filename=os.path.basename(self.filename))
+            base_path = self.filename[:-len(kwargs['basename'])]
 
+            cwd = os.getcwd()
+            os.chdir(base_path)
+
+            compile_kwargs = {
+                'filename': self.filename,
+                'output_style': OUTPUT_STYLE,
+                'source_comments': SOURCE_COMMENTS,
+                'source_map_filename': map_filename,
+            }
+            content = compile(**compile_kwargs)
+            if SOURCE_COMMENTS and SOURCE_MAP_FILENAME:
+                content, map_content = content
+                content = re.sub(r"sourceMappingURL(.*?)\*", "sourceMappingURL={} *".format(map_filename), content)
+                map_content = re.sub(r"\"(.*?)ss\"", "\"" + settings.STATIC_URL + "\\1ss\"", map_content)
+
+                compressor = CssCompressor()
+                compressor.storage.save(
+                    os.path.join(compressor.output_dir, compressor.output_prefix, map_filename),
+                    ContentFile(map_content.encode(compressor.charset))
+                )
+
+            # Change back
+            os.chdir(cwd)
+            return content
+        else:
+            return compile(
+                string=self.content,
+                output_style=OUTPUT_STYLE
+            )
