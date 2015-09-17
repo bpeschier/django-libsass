@@ -84,6 +84,8 @@ class SassCompiler(FilterBase):
                     os.path.join(compressor.output_dir, compressor.output_prefix, map_filename),
                     ContentFile(map_content.encode(compressor.charset))
                 )
+            else:
+                content = content[0]  # unwrap the tuple
 
             # Change back
             os.chdir(cwd)
